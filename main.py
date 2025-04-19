@@ -6,9 +6,9 @@ from itertools import permutations
 import os
 from fastapi.middleware.cors import CORSMiddleware
 
-app = FastAPI()
+app = FastAPI(title="Delivery Cost API", version="1.0.0")
 
-# CORS middleware for frontend/API testing
+# Enable CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -16,12 +16,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Root endpoint (Render health check)
+# Root health check
 @app.get("/")
-def read_root():
+def root():
     return {"message": "App is live!"}
 
-# Product-center and weight mappings
+# Product-center and weight data
 PRODUCT_CENTER = {
     "A": "C1", "B": "C1", "C": "C1",
     "D": "C2", "E": "C2", "F": "C2",
@@ -41,7 +41,7 @@ DIST = {
     "L1": {"C1": 3, "C2": 2, "C3": 2}
 }
 
-# Input model for API
+# Input Model
 class Order(BaseModel):
     A: int = 0
     B: int = 0
@@ -53,49 +53,38 @@ class Order(BaseModel):
     H: int = 0
     I: int = 0
 
-# Cost per weight slab
+# Cost calculation
 def slab_rate(w: float) -> float:
     if w <= 5:
         return 10
-    extra = w - 5
-    slabs = math.ceil(extra / 5)
-    return 10 + slabs * 8
+    return 10 + math.ceil((w - 5) / 5) * 8
 
-# Main delivery cost API
 @app.post("/calculate-cost")
 def calculate_cost(order: Order):
     data = order.dict()
     center_w: Dict[str, float] = {}
-
-    # Step 1: Group product weights by center
+    
     for p, qty in data.items():
         if qty > 0:
             center = PRODUCT_CENTER[p]
-            weight = PRODUCT_WEIGHT[p] * qty
-            center_w[center] = center_w.get(center, 0) + weight
+            center_w[center] = center_w.get(center, 0) + PRODUCT_WEIGHT[p] * qty
 
     centers = list(center_w.keys())
     best = float("inf")
-
-    # Step 2: Try all permutations of pickup sequences
+    
     for start in centers:
         others = [c for c in centers if c != start]
         for perm in permutations(others):
             cost = 0
-            # First delivery from start → L1
-            w0 = center_w[start]
-            cost += DIST[start]["L1"] * slab_rate(w0)
-
-            # Then pickup → deliver sequences
+            cost += DIST[start]["L1"] * slab_rate(center_w[start])
             for c in perm:
-                cost += DIST["L1"][c] * slab_rate(0)         # Empty pickup trip
-                cost += DIST[c]["L1"] * slab_rate(center_w[c])  # Deliver back to L1
-
+                cost += DIST["L1"][c] * slab_rate(0)
+                cost += DIST[c]["L1"] * slab_rate(center_w[c])
             best = min(best, cost)
-
+    
     return {"minimum_cost": round(best)}
 
-# For running locally or on Render
+# For local or Render deploy
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 10000))
