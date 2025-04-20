@@ -48,7 +48,6 @@ class OrderRequest(BaseModel):
 @app.post("/calculate-cost")
 def calculate_cost_endpoint(order: OrderRequest):
     order = order.__root__
-    # Simplified logic: get from respective centers
     routes = []
     for center, stock in center_stock.items():
         total_weight = 0
