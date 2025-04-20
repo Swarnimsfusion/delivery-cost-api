@@ -1,13 +1,13 @@
 from fastapi import FastAPI, Request
-from pydantic import BaseModel
+from pydantic import RootModel
 from typing import Dict
 
 app = FastAPI(
     title="Delivery Cost API",
     version="1.0.0",
-    docs_url="/api/docs",
-    redoc_url=None,
-    openapi_url="/api/openapi.json"
+    docs_url="/api/docs",  # Swagger URL
+    redoc_url=None,  # Disable ReDoc
+    openapi_url="/api/openapi.json",  # OpenAPI URL
 )
 
 # Warehouse stock data
@@ -42,13 +42,13 @@ def calculate_cost(weight, distance):
             weight -= 5
     return cost
 
-class OrderRequest(BaseModel):
-    __root__: Dict[str, int]
+# Using RootModel instead of BaseModel
+class OrderRequest(RootModel):
+    root: Dict[str, int]  # Changed __root__ to root for compatibility with Pydantic v2
 
 @app.post("/calculate-cost")
 def calculate_cost_endpoint(order: OrderRequest):
-    order = order.__root__
-    # Simplified logic: get from respective centers
+    order = order.root  # Use root instead of __root__
     routes = []
     for center, stock in center_stock.items():
         total_weight = 0
@@ -61,3 +61,9 @@ def calculate_cost_endpoint(order: OrderRequest):
             routes.append(cost)
 
     return {"minimum_cost": min(routes) if routes else 0}
+
+# Allow running locally or using Render's PORT environment variable
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 10000))
+    uvicorn.run("main:app", host="0.0.0.0", port=port)
