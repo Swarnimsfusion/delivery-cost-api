@@ -1,70 +1,69 @@
-from flask import Flask, request, jsonify
+from fastapi import FastAPI, Request
+from pydantic import RootModel
+from typing import Dict
 
-app = Flask(__name__)
+app = FastAPI(
+    title="Delivery Cost API",
+    version="1.0.0",
+    docs_url="/api/docs",  # Swagger URL
+    redoc_url=None,  # Disable ReDoc
+    openapi_url="/api/openapi.json",  # OpenAPI URL
+)
 
-# Define product locations
-product_locations = {
-    "A": "C1", "B": "C1", "C": "C1",
-    "D": "C2", "E": "C2", "F": "C2",
-    "G": "C3", "H": "C3", "I": "C3"
+# Warehouse stock data
+center_stock = {
+    "C1": {"A": 3, "B": 2, "C": 8, "D": 12},
+    "C2": {"E": 25, "F": 15},
+    "C3": {"G": 0.5, "H": 1, "I": 2}
 }
 
-# Define travel costs
-travel_costs = {
-    ("C1", "L1"): 20,
-    ("C2", "L1"): 30,
-    ("C3", "L1"): 25,
-    ("C1", "C2"): 15,
-    ("C2", "C1"): 15,
-    ("C1", "C3"): 10,
-    ("C3", "C1"): 10,
-    ("C2", "C3"): 15,
-    ("C3", "C2"): 15,
-    ("L1", "C1"): 20,
-    ("L1", "C2"): 30,
-    ("L1", "C3"): 25
+# Distance graph (center to center or to L1)
+distances = {
+    ("C1", "L1"): 3,
+    ("C2", "L1"): 2.5,
+    ("C3", "L1"): 2,
+    ("C1", "C2"): 4,
+    ("C2", "C1"): 4,
+    ("C1", "C3"): 3,
+    ("C3", "C1"): 3,
+    ("C2", "C3"): 2.5,
+    ("C3", "C2"): 2.5,
 }
 
-def calculate_min_cost(order):
-    # Identify centers that have the products
-    centers_needed = set()
-    for product, quantity in order.items():
-        if quantity > 0:
-            centers_needed.add(product_locations.get(product))
+# Cost slab
+def calculate_cost(weight, distance):
+    cost = 0
+    while weight > 0:
+        if weight <= 5:
+            cost += 10 * distance
+            break
+        else:
+            cost += 8 * distance
+            weight -= 5
+    return cost
 
-    if not centers_needed:
-        return 0  # No items to deliver
+# Using RootModel instead of BaseModel
+class OrderRequest(RootModel):
+    root: Dict[str, int]  # Changed __root__ to root for compatibility with Pydantic v2
 
-    # Greedily pick the closest center to L1 as the starting point
-    start_center = min(centers_needed, key=lambda center: travel_costs.get((center, "L1"), float('inf')))
-    centers_needed.remove(start_center)
+@app.post("/calculate-cost")
+def calculate_cost_endpoint(order: OrderRequest):
+    order = order.root  # Use root instead of __root__
+    routes = []
+    for center, stock in center_stock.items():
+        total_weight = 0
+        for product, qty in order.items():
+            if product in stock:
+                total_weight += stock[product] * qty
+        if total_weight > 0:
+            distance = distances.get((center, "L1"), 999)
+            cost = calculate_cost(total_weight, distance)
+            routes.append(cost)
 
-    total_cost = travel_costs.get((start_center, "L1"), 0)
+    return {"minimum_cost": min(routes) if routes else 0}
 
-    # Now, we need to figure out the most efficient way to visit all other centers
-    # We’ll take the nearest center first and then continue picking the nearest available center.
-    current_center = start_center
-
-    while centers_needed:
-        next_center = min(centers_needed, key=lambda center: travel_costs.get((current_center, center), float('inf')))
-        total_cost += travel_costs.get((current_center, next_center), 0)  # Travel between centers
-        current_center = next_center
-        centers_needed.remove(next_center)
-
-    # Finally, we must return to L1 after picking up all items
-    total_cost += travel_costs.get((current_center, "L1"), 0)
-
-    return total_cost
-
-@app.route('/calculate-cost', methods=['POST'])
-def calculate_cost():
-    data = request.get_json()
-    min_cost = calculate_min_cost(data)
-
-    return jsonify({
-        "message": "Delivery cost calculated!",
-        "minimum_cost": min_cost
-    })
-
-if __name__ == '__main__':
-    app.run(debug=True)
+# Allow running locally or using Render's PORT environment variable
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 10000))
+    uvicorn.run("main:app", host="0.0.0.0", port=port)
