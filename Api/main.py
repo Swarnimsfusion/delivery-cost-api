@@ -1,90 +1,109 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import RootModel
+from pydantic import BaseModel
 from typing import Dict
+from itertools import permutations
+import math
 import os
 
-# ✅ FastAPI App with Swagger path shifted
 app = FastAPI(
     title="Delivery Cost API",
     version="1.0.0",
-    docs_url="/api/docs",            # Swagger path
-    redoc_url=None,                  # Disable ReDoc
-    openapi_url="/api/openapi.json"  # OpenAPI schema path
+    docs_url="/api/docs",
+    redoc_url=None,
+    openapi_url="/api/openapi.json"
 )
 
-# ✅ CORS Middleware - Fixes Swagger fetch issue
+# ✅ CORS Middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],            # Allow all origins (for testing)
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ✅ Basic root route for health check
+# ✅ Health check
 @app.get("/")
 def read_root():
     return {"message": "App is live!"}
 
-# ✅ Product weights per unit (from PDF)
+# ✅ Product weights
 product_weight = {
     "A": 3, "B": 2, "C": 8,
     "D": 12, "E": 25, "F": 15,
     "G": 0.5, "H": 1, "I": 2
 }
 
-# ✅ Product → Center mapping
+# ✅ Product-center mapping
 product_center = {
     "A": "C1", "B": "C1", "C": "C1",
     "D": "C2", "E": "C2", "F": "C2",
     "G": "C3", "H": "C3", "I": "C3"
 }
 
-# ✅ Distances (in km)
-distances = {
-    ("C1", "L1"): 3, ("C2", "L1"): 2, ("C3", "L1"): 2,
-    ("C1", "C2"): 4, ("C2", "C1"): 4,
-    ("C1", "C3"): 3, ("C3", "C1"): 3,
-    ("C2", "C3"): 3, ("C3", "C2"): 3
+# ✅ Distances
+dist = {
+    "C1": {"L1": 3, "C2": 4, "C3": 3},
+    "C2": {"L1": 2, "C1": 4, "C3": 3},
+    "C3": {"L1": 2, "C1": 3, "C2": 3},
+    "L1": {"C1": 3, "C2": 2, "C3": 2}
 }
 
-# ✅ Delivery slab logic
-def calculate_slab_cost(weight, distance):
+# ✅ Slab rate logic
+def slab_rate(weight):
     if weight <= 5:
-        return 10 * distance
-    remaining = weight - 5
-    slabs = (remaining + 4) // 5  # Equivalent to math.ceil(remaining / 5)
-    return 10 * distance + slabs * 8 * distance
+        return 10
+    extra = weight - 5
+    slabs = math.ceil(extra / 5)
+    return 10 + slabs * 8
 
-# ✅ Request model using RootModel (Pydantic v2)
-class OrderRequest(RootModel):
-    root: Dict[str, int]
+# ✅ Request model
+class Order(BaseModel):
+    A: int = 0
+    B: int = 0
+    C: int = 0
+    D: int = 0
+    E: int = 0
+    F: int = 0
+    G: int = 0
+    H: int = 0
+    I: int = 0
 
-# ✅ Main cost calculation route
+# ✅ Cost calculation route
 @app.post("/calculate-cost")
-def calculate_cost(order: OrderRequest):
-    data = order.root
+def calculate_cost(order: Order):
+    data = order.dict()
 
-    # Total weight from each center
-    center_weights = {"C1": 0, "C2": 0, "C3": 0}
-    for product, qty in data.items():
-        if qty <= 0:
-            continue
-        center = product_center.get(product)
-        weight = product_weight.get(product, 0) * qty
-        if center:
-            center_weights[center] += weight
+    # Calculate total weight per center
+    center_weights: Dict[str, float] = {}
+    for p, qty in data.items():
+        if qty > 0:
+            c = product_center[p]
+            w = product_weight[p] * qty
+            center_weights[c] = center_weights.get(c, 0) + w
 
-    total_cost = 0
-    for center, weight in center_weights.items():
-        if weight > 0:
-            dist = distances.get((center, "L1"), 0)
-            total_cost += calculate_slab_cost(weight, dist)
+    centers = list(center_weights.keys())
+    best_cost = float("inf")
 
-    return {"minimum_cost": round(total_cost)}
+    for start in centers:
+        others = [c for c in centers if c != start]
+        for route in permutations(others):
+            total_cost = 0
+            # First trip: start → L1
+            w1 = center_weights[start]
+            total_cost += dist[start]["L1"] * slab_rate(w1)
 
-# ✅ Local run support (needed for Render)
+            # Remaining trips: L1 → other_center → L1
+            for c in route:
+                total_cost += dist["L1"][c] * slab_rate(0)  # empty trip
+                total_cost += dist[c]["L1"] * slab_rate(center_weights[c])  # loaded trip
+
+            best_cost = min(best_cost, total_cost)
+
+    return {"minimum_cost": round(best_cost)}
+
+# ✅ For local dev or Render
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 10000))
