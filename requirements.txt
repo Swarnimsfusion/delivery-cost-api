@@ -1,7 +1,1 @@
-<<<<<<< HEAD
-fastapi
-uvicorn
-=======
-fastapi
-uvicorn
->>>>>>> 7290720a40cb0cbed8fc6d62bd7be397231f5382
+flask
